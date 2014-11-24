@@ -370,6 +370,60 @@ class AdaGrad(LearningRule):
 
         return updates
 
+class ARPROP(LearningRule):
+    """
+    ARPROP = Combine a cheap learning algorithm (RPROP), with more global
+    information, like the magnitude of the network batch error.
+    As described in 
+
+    Anastasiadis, Aristoklis D., George D. Magoulas, and Michael N. Vrahatis.
+    "An efficient improvement of the Rprop algorithm."
+    Proceedings of the First International Workshop on Artificial
+    Neural Networks in Pattern Recognition (IAPR 2003),
+    University of Florence, Italy. 2003.
+
+    Parameters
+    ----------
+
+    nu_plus: float,optional
+        Additive rate for when the product of gradients is positive
+
+    nu_minus: float,optional
+        Multiplicative rate for when the product of gradients is negative
+    
+
+    Notes
+    -----
+
+    """
+
+    def __init__(self, nu_plus = 1.05, nu_minus = 0.95):
+        assert(nu_plus > 1)
+        assert(nu_minus < 1)
+        assert(nu_minus < nu_plus)
+        self.previous_gradient = None
+        self.delta = None
+        self.nu_plus = nu_plus
+        self.nu_minus = nu_minus
+
+    def add_channels_to_monitor(self, monitor, monitoring_dataset):
+        """
+        Activates monitoring of the learning rate.
+
+        Parameters
+        ----------
+        monitor : pylearn2.monitor.Monitor
+            Monitor object, to which the rule should register additional
+            monitoring channels.
+        monitoring_dataset : pylearn2.datasets.dataset.Dataset or dict
+            Dataset instance or dictionary whose values are Dataset objects.
+        """
+        monitor.add_channel(
+            name='learning_rate',
+            ipt=None,
+            val=self.delta,
+            data_specs=(NullSpace(), ''),
+            dataset=monitoring_dataset)
 
 class RMSProp(LearningRule):
     """
