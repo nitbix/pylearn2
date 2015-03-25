@@ -142,7 +142,8 @@ def load(filepath, recurse_depth=0, retry=True):
             return cPickle.loads(content)
         else:
             nsec = 0.5 * (2.0 ** float(recurse_depth))
-            logger.info("Waiting {0} seconds and trying again".format(nsec))
+            logger.info("Waiting {0} seconds and trying again to open {1}".
+                    format(nsec,filepath))
             time.sleep(nsec)
             return load(filepath, recurse_depth + 1, retry)
 

@@ -6,8 +6,9 @@ import numpy as np
 import warnings
 
 from theano.compat import six
-from theano import config
+from theano import config,shared
 from theano import tensor as T
+from theano.ifelse import ifelse
 
 from pylearn2.compat import OrderedDict
 from pylearn2.space import NullSpace
@@ -370,60 +371,221 @@ class AdaGrad(LearningRule):
 
         return updates
 
-class ARPROP(LearningRule):
-    """
-    ARPROP = Combine a cheap learning algorithm (RPROP), with more global
-    information, like the magnitude of the network batch error.
-    As described in 
-
-    Anastasiadis, Aristoklis D., George D. Magoulas, and Michael N. Vrahatis.
-    "An efficient improvement of the Rprop algorithm."
-    Proceedings of the First International Workshop on Artificial
-    Neural Networks in Pattern Recognition (IAPR 2003),
-    University of Florence, Italy. 2003.
-
-    Parameters
-    ----------
-
-    nu_plus: float,optional
-        Additive rate for when the product of gradients is positive
-
-    nu_minus: float,optional
-        Multiplicative rate for when the product of gradients is negative
-    
-
-    Notes
-    -----
-
-    """
-
-    def __init__(self, nu_plus = 1.05, nu_minus = 0.95):
-        assert(nu_plus > 1)
-        assert(nu_minus < 1)
-        assert(nu_minus < nu_plus)
-        self.previous_gradient = None
-        self.delta = None
-        self.nu_plus = nu_plus
-        self.nu_minus = nu_minus
+class RPROP(LearningRule):
+    def __init__(
+        self,
+        decrease_rate=0.5,
+        increase_rate=1.2,
+        min_rate=1e-6,
+        max_rate=50
+    ):
+        self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
+        self.increase_rate = sharedX(increase_rate, 'increase_rate')
+        self.min_rate = min_rate
+        self.max_rate = max_rate
 
     def add_channels_to_monitor(self, monitor, monitoring_dataset):
-        """
-        Activates monitoring of the learning rate.
-
-        Parameters
-        ----------
-        monitor : pylearn2.monitor.Monitor
-            Monitor object, to which the rule should register additional
-            monitoring channels.
-        monitoring_dataset : pylearn2.datasets.dataset.Dataset or dict
-            Dataset instance or dictionary whose values are Dataset objects.
-        """
         monitor.add_channel(
-            name='learning_rate',
+            'rprop_decrease_rate',
             ipt=None,
-            val=self.delta,
-            data_specs=(NullSpace(), ''),
-            dataset=monitoring_dataset)
+            val=self.decrease_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'rprop_increase_rate',
+            ipt=None,
+            val=self.increase_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+
+    def get_updates(self, learning_rate, grads, lr_scalers=None, global_error=None):
+        updates = OrderedDict()
+
+        for param, grad in grads.iteritems():
+            # Created required shared variables
+            lr = lr_scalers.get(param, learning_rate.get_value())
+            delta = sharedX(
+                np.zeros_like(param.get_value()) + lr,
+                borrow=True
+            )
+            previous_grad = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+
+            # Name variables according to the parameter name
+            if param.name is not None:
+                delta.name = 'delta_'+param.name
+                previous_grad.name = 'previous_grad_'+param.name
+
+            temp = grad*previous_grad
+            delta_inc = T.clip(
+                T.switch(
+                    T.eq(temp, 0.),
+                    delta,
+                    T.switch(
+                        T.lt(temp, 0.),
+                        delta*self.decrease_rate,
+                        delta*self.increase_rate
+                    )
+                ),
+                self.min_rate,
+                self.max_rate
+            )
+
+            previous_grad_inc = T.switch(
+                T.gt(temp, 0.),
+                grad,
+                T.zeros_like(grad)
+            )
+
+            # Calculate updates of parameters
+            updated_inc = -delta*T.sgn(grad)
+
+            # Compile the updates
+            updates[param] = param + updated_inc
+            updates[delta] = delta_inc
+            updates[previous_grad] = previous_grad_inc
+
+        return updates
+
+class ARPROP(LearningRule):
+    def __init__(
+        self,
+        decrease_rate=0.5,
+        increase_rate=1.2,
+        min_rate=1e-6,
+        max_rate=50
+    ):
+        self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
+        self.increase_rate = sharedX(increase_rate, 'increase_rate')
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+        self.q = sharedX(1,'q')
+        self.prev_global_error = sharedX(0,'prev_global_error')
+        self.global_error = sharedX(0,'global_error')
+
+    def add_channels_to_monitor(self, monitor, monitoring_dataset):
+        monitor.add_channel(
+            'rprop_decrease_rate',
+            ipt=None,
+            val=self.decrease_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'rprop_increase_rate',
+            ipt=None,
+            val=self.increase_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'q',
+            ipt=None,
+            val=self.q,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'prev_global_error',
+            ipt=None,
+            val=self.prev_global_error,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'global_error',
+            ipt=None,
+            val=self.global_error,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+
+    def get_updates(self, learning_rate, grads, lr_scalers=None,
+            global_error=None):
+        if global_error is None:
+            raise ValueError("global_error needs to be passed to ARPROP")
+        updates = OrderedDict()
+
+        updated_q = T.switch(
+                T.lt(self.prev_global_error,self.global_error),
+                T.switch(T.gt(self.prev_global_error,0),
+                    T.switch(T.gt(self.global_error,0),
+                        self.q + 1,
+                        1),
+                    1),
+                1)
+        for param, grad in grads.iteritems():
+            # Created required shared variables
+            lr = lr_scalers.get(param, learning_rate.get_value())
+            delta = sharedX(
+                np.zeros_like(param.get_value()) + lr,
+                borrow=True
+            )
+            previous_delta = sharedX(
+                np.zeros_like(param.get_value()) + lr,
+                borrow=True
+            )
+            previous_grad = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+
+            # Name variables according to the parameter name
+            if param.name is not None:
+                delta.name = 'delta_'+param.name
+                previous_grad.name = 'previous_grad_'+param.name
+
+            temp = grad*previous_grad
+            delta_inc = T.clip(
+                T.switch(
+                    T.eq(temp, 0.),
+                    delta,
+                    T.switch(
+                        T.lt(temp, 0.),
+                        delta*self.decrease_rate,
+                        delta*self.increase_rate
+                    )
+                ),
+                self.min_rate,
+                self.max_rate
+            )
+
+            previous_grad_inc = T.switch(
+                T.gt(temp, 0.),
+                grad,
+                T.zeros_like(grad)
+            )
+
+            # Calculate updates of parameters
+            updated_inc = T.switch(
+                    T.lt(self.prev_global_error,self.global_error),
+                    previous_delta/T.pow(2.,updated_q),
+                    -delta*T.sgn(grad))
+
+            updated_previous_delta = T.switch(
+                    T.lt(self.prev_global_error,self.global_error),
+                    previous_delta, delta_inc)
+
+            # Compile the updates
+            updates[param] = param + updated_inc
+            updates[delta] = delta_inc
+            updates[previous_grad] = previous_grad_inc
+            updates[previous_delta] = updated_previous_delta
+
+    
+#        new_prev_global_error = T.switch(T.le(self.prev_global_error,0),self.global_error,
+#                        T.switch(T.lt(self.prev_global_error,self.global_error),
+#                        self.prev_global_error,
+#                        self.global_error))
+        new_prev_global_error = self.global_error
+        updates[self.q] = updated_q
+        updates[self.prev_global_error] = new_prev_global_error
+        updates[self.global_error] = global_error
+        return updates
 
 class RMSProp(LearningRule):
     """

@@ -42,12 +42,14 @@
             },
         },
         learning_rate: 0.097259,
-        learning_rule: !obj:pylearn2.training_algorithms.learning_rule.Momentum {
-            init_momentum: 0.5
+        learning_rule: !obj:pylearn2.training_algorithms.learning_rule.EWMARPROP {
+#            init_momentum: 0.5
+            decay: 0.15,
+            nu_plus: 1.05,
+            nu_minus: 0.5
         },
-        cost: !obj:pylearn2.costs.mlp.norman.NormAN {
+        cost: !obj:pylearn2.costs.mlp.dropout.Dropout {
              input_include_probs: { 'h0' : .8 },
-             input_perturb_stds: { 'h0' : 0. },
              input_scales: { 'h0' : 1.25 }
         },
         termination_criterion: !obj:pylearn2.termination_criteria.EpochCounter {
@@ -55,16 +57,16 @@
         }
     },
     extensions: [
-        !obj:pylearn2.training_algorithms.learning_rule.MomentumAdjustor {
-            start: 1,
-            saturate: 698,
-            final_momentum: 0.699217
-        },
-        !obj:pylearn2.training_algorithms.sgd.LinearDecayOverEpoch {
-            start: 1,
-            saturate: 560,
-            decay_factor: 0.022292
-        }
+#        !obj:pylearn2.training_algorithms.learning_rule.MomentumAdjustor {
+#            start: 1,
+#            saturate: 698,
+#            final_momentum: 0.699217
+#        },
+#        !obj:pylearn2.training_algorithms.sgd.LinearDecayOverEpoch {
+#            start: 1,
+#            saturate: 560,
+#            decay_factor: 0.022292
+#        }
     ],
     save_path: "${PYLEARN2_TRAIN_FILE_FULL_STEM}.pkl",
     save_freq : 1
