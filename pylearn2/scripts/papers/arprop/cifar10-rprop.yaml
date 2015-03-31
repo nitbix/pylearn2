@@ -103,11 +103,11 @@
 #            saturate: 250,
 #            final_momentum: .65
 #        },
-        !obj:pylearn2.training_algorithms.sgd.LinearDecayOverEpoch {
-            start: 1,
-            saturate: 500,
-            decay_factor: .01
-        },
+#        !obj:pylearn2.training_algorithms.sgd.LinearDecayOverEpoch {
+#            start: 1,
+#            saturate: 500,
+#            decay_factor: .01
+#        },
         !obj:pylearn2.train_extensions.window_flip.WindowAndFlip {
             pad_randomized: 8,
             window_shape: *window_shape,
