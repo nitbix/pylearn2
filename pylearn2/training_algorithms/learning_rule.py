@@ -40,7 +40,8 @@ class LearningRule():
         """
         pass
 
-    def get_updates(self, learning_rate, grads, lr_scalers=None):
+    def get_updates(self, learning_rate, grads, lr_scalers=None,
+            global_error=None):
         """
         Provides the symbolic (theano) description of the updates needed to
         perform this learning rule.
@@ -127,7 +128,8 @@ class Momentum(LearningRule):
             data_specs=(NullSpace(), ''),
             dataset=monitoring_dataset)
 
-    def get_updates(self, learning_rate, grads, lr_scalers=None):
+    def get_updates(self, learning_rate, grads, lr_scalers=None,
+            global_error=None):
         """
         Provides the updates for learning with gradient descent + momentum.
 
@@ -271,7 +273,8 @@ class AdaDelta(LearningRule):
         assert decay < 1.
         self.decay = decay
 
-    def get_updates(self, learning_rate, grads, lr_scalers=None):
+    def get_updates(self, learning_rate, grads, lr_scalers=None,
+            global_error=None):
         """
         Compute the AdaDelta updates
 
@@ -331,7 +334,8 @@ class AdaGrad(LearningRule):
     stochastic optimization", Duchi J, Hazan E, Singer Y.
     """
 
-    def get_updates(self, learning_rate, grads, lr_scalers=None):
+    def get_updates(self, learning_rate, grads, lr_scalers=None,
+            global_error=None):
         """
         Compute the AdaGrad updates
 
@@ -379,10 +383,13 @@ class RPROP(LearningRule):
         min_rate=1e-6,
         max_rate=50
     ):
+        assert increase_rate > 1.
+        assert decrease_rate < 1.
         self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
         self.increase_rate = sharedX(increase_rate, 'increase_rate')
         self.min_rate = min_rate
         self.max_rate = max_rate
+        self.zeros = OrderedDict()
 
     def add_channels_to_monitor(self, monitor, monitoring_dataset):
         monitor.add_channel(
@@ -399,6 +406,14 @@ class RPROP(LearningRule):
             dataset=monitoring_dataset,
             data_specs=(NullSpace(), '')
         )
+        for zero in self.zeros.values():
+            monitor.add_channel(
+                zero.name,
+                ipt=None,
+                val=T.sum(zero),
+                dataset=monitoring_dataset,
+                data_specs=(NullSpace(), '')
+            )
 
     def get_updates(self, learning_rate, grads, lr_scalers=None, global_error=None):
         updates = OrderedDict()
@@ -414,6 +429,358 @@ class RPROP(LearningRule):
                 np.zeros_like(param.get_value()),
                 borrow=True
             )
+            zeros = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+            
+
+            # Name variables according to the parameter name
+            if param.name is not None:
+                delta.name = 'delta_'+param.name
+                zeros.name = 'zeros_' + param.name
+                previous_grad.name = 'previous_grad_' + param.name
+
+            self.zeros[param] = zeros
+            temp = grad*previous_grad
+            delta_inc = T.switch(T.neq(grad,0.),
+                T.clip(
+                    T.switch(
+                        T.eq(temp, 0.),
+                        delta,
+                        T.switch(
+                            T.lt(temp, 0.),
+                            delta*self.decrease_rate,
+                            delta*self.increase_rate
+                        )
+                    ),
+                    self.min_rate,
+                    self.max_rate
+                ),
+                delta
+            )
+
+
+            previous_grad_inc = T.switch(
+                T.neq(grad,0.),
+                T.switch(
+                    T.gt(temp, 0.),
+                    grad,
+                    T.zeros_like(grad)
+                ),
+                previous_grad
+            )
+
+            # Calculate updates of parameters
+            updated_inc = T.switch(
+                T.neq(grad,0.),
+                - delta_inc * T.sgn(grad),
+                0.
+            )
+
+            new_zeros = zeros + T.switch(T.neq(grad,0.),0,1)
+            # Compile the updates
+            updates[param] = param + updated_inc
+            updates[delta] = delta_inc
+            updates[previous_grad] = previous_grad_inc
+            updates[zeros] = new_zeros
+
+        return updates
+
+class DRPROP(LearningRule):
+    def __init__(
+        self,
+        decrease_rate=0.5,
+        increase_rate=1.2,
+        min_rate=1e-6,
+        max_rate=50,
+        switching_threshold=1e-6
+    ):
+        assert increase_rate > 1.
+        assert decrease_rate < 1.
+        self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
+        self.increase_rate = sharedX(increase_rate, 'increase_rate')
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+        self.switching_threshold = switching_threshold
+        self.epsilons = OrderedDict()
+        self.gt_epsilons = OrderedDict()
+        self.lt_epsilons = OrderedDict()
+        self.eq_epsilons = OrderedDict()
+
+    def add_channels_to_monitor(self, monitor, monitoring_dataset):
+        monitor.add_channel(
+            'rprop_decrease_rate',
+            ipt=None,
+            val=self.decrease_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'rprop_increase_rate',
+            ipt=None,
+            val=self.increase_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        #for gt_epsilon in self.gt_epsilons.values():
+        #    monitor.add_channel(
+        #        gt_epsilon.name,
+        #        ipt=None,
+        #        val=T.sum(gt_epsilon),
+        #        dataset=monitoring_dataset,
+        #        data_specs=(NullSpace(), '')
+        #    )
+        #for lt_epsilon in self.lt_epsilons.values():
+        #    monitor.add_channel(
+        #        lt_epsilon.name,
+        #        ipt=None,
+        #        val=T.sum(lt_epsilon),
+        #        dataset=monitoring_dataset,
+        #        data_specs=(NullSpace(), '')
+        #    )
+        #for eq_epsilon in self.eq_epsilons.values():
+        #    monitor.add_channel(
+        #        eq_epsilon.name,
+        #        ipt=None,
+        #        val=T.sum(eq_epsilon),
+        #        dataset=monitoring_dataset,
+        #        data_specs=(NullSpace(), '')
+        #    )
+        for epsilon in self.epsilons.values():
+            monitor.add_channel(
+                epsilon.name + '_sum',
+                ipt=None,
+                val=T.sum(epsilon),
+                dataset=monitoring_dataset,
+                data_specs=(NullSpace(), '')
+            )
+            monitor.add_channel(
+                epsilon.name + '_min',
+                ipt=None,
+                val=T.min(epsilon),
+                dataset=monitoring_dataset,
+                data_specs=(NullSpace(), '')
+            )
+            monitor.add_channel(
+                epsilon.name + '_max',
+                ipt=None,
+                val=T.max(epsilon),
+                dataset=monitoring_dataset,
+                data_specs=(NullSpace(), '')
+            )
+
+    def get_updates(self, learning_rate, grads, lr_scalers=None, global_error=None):
+        updates = OrderedDict()
+
+        for param, grad in grads.iteritems():
+            # Created required shared variables
+            lr = lr_scalers.get(param, learning_rate.get_value())
+            delta = sharedX(
+                np.zeros_like(param.get_value()) + lr,
+                borrow=True
+            )
+            previous_grad = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+            epsilons = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+            #gt_epsilons = sharedX(
+            #    np.zeros_like(param.get_value()),
+            #    borrow=True
+            #)
+            #lt_epsilons = sharedX(
+            #    np.zeros_like(param.get_value()),
+            #    borrow=True
+            #)
+            #eq_epsilons = sharedX(
+            #    np.zeros_like(param.get_value()),
+            #    borrow=True
+            #)
+            
+
+            # Name variables according to the parameter name
+            if param.name is not None:
+                delta.name = 'delta_'+param.name
+                epsilons.name = 'epsilons_' + param.name
+                #gt_epsilons.name = 'gt_epsilons_' + param.name
+                #lt_epsilons.name = 'lt_epsilons_' + param.name
+                #eq_epsilons.name = 'eq_epsilons_' + param.name
+                previous_grad.name = 'previous_grad_' + param.name
+
+            self.epsilons[param] = epsilons
+            #self.gt_epsilons[param] = gt_epsilons
+            #self.lt_epsilons[param] = lt_epsilons
+            #self.eq_epsilons[param] = eq_epsilons
+
+            temp = grad*previous_grad
+            new_epsilons = T.clip(
+                    T.switch(
+                        T.lt(T.abs_(grad),self.switching_threshold),
+                        epsilons + 1.,
+                        0.
+                    ),
+                    0.,
+                    10
+            )
+
+            delta_inc = T.switch(T.neq(grad,0.),
+                T.clip(
+                    T.switch(
+                        T.eq(temp, 0.),
+                        delta,
+                        T.switch(
+                            T.lt(temp, 0.),
+                            delta*self.decrease_rate,
+                            delta*self.increase_rate
+                        )
+                    ),
+                    self.min_rate,
+                    self.max_rate
+                ),
+                delta
+            )
+            
+            previous_grad_inc = T.switch(
+                T.neq(grad,0.),
+                T.switch(
+                    T.gt(temp, 0.),
+                    grad,
+                    T.zeros_like(grad)
+                ),
+                previous_grad
+            )
+
+            scaled_lr = lr_scalers.get(param, 1.) * learning_rate
+            unscaled_update = - delta_inc * T.sgn(grad)
+            # Calculate updates of parameters
+            updated_inc = T.switch(
+                T.lt(new_epsilons,0.1),
+                unscaled_update,
+                T.switch(
+                    T.gt(T.abs_(grad),T.abs_(previous_grad)),
+                    - unscaled_update / (2 ** (new_epsilons + 1.)),
+                    unscaled_update / (2 ** (new_epsilons + 1.))
+                )
+            )
+
+            #new_gt_epsilons = T.switch(
+            #        T.eq(grad,0.),
+            #        0.,
+            #        T.switch(
+            #            T.gt(T.abs_(grad),self.switching_threshold),
+            #            0.,
+            #            T.switch(
+            #                T.gt(temp,0.),
+            #                1.,
+            #                0.
+            #            )
+            #        )
+            #)
+
+            #new_lt_epsilons = T.switch(
+            #        T.eq(grad,0.),
+            #        0.,
+            #        T.switch(
+            #            T.gt(T.abs_(grad),self.switching_threshold),
+            #            0.,
+            #            T.switch(
+            #                T.lt(temp,0.),
+            #                1.,
+            #                0.
+            #            )
+            #        )
+            #)
+
+            #new_eq_epsilons = T.switch(
+            #        T.eq(grad,0.),
+            #        0.,
+            #        T.switch(
+            #            T.gt(T.abs_(grad),self.switching_threshold),
+            #            0.,
+            #            T.switch(
+            #                T.eq(temp,0.),
+            #                1.,
+            #                0.
+            #            )
+            #        )
+            #)
+            # Compile the updates
+            updates[param] = param + updated_inc
+            updates[delta] = delta_inc 
+            updates[previous_grad] = previous_grad_inc
+            updates[epsilons] = new_epsilons
+            #updates[gt_epsilons] = new_gt_epsilons
+            #updates[lt_epsilons] = new_lt_epsilons
+            #updates[eq_epsilons] = new_eq_epsilons
+
+        return updates
+
+class MRPROP(LearningRule):
+    def __init__(
+        self,
+        init_momentum,
+        decrease_rate=0.5,
+        increase_rate=1.2,
+        min_rate=1e-6,
+        max_rate=50
+    ):
+        assert init_momentum >= 0.
+        assert init_momentum < 1.
+        assert increase_rate > 1.
+        assert decrease_rate < 1.
+        self.momentum = sharedX(init_momentum, 'momentum')
+        self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
+        self.increase_rate = sharedX(increase_rate, 'increase_rate')
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+        self.delta = OrderedDict()
+
+    def add_channels_to_monitor(self, monitor, monitoring_dataset):
+        monitor.add_channel(
+            'rprop_decrease_rate',
+            ipt=None,
+            val=self.decrease_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            'rprop_increase_rate',
+            ipt=None,
+            val=self.increase_rate,
+            dataset=monitoring_dataset,
+            data_specs=(NullSpace(), '')
+        )
+        monitor.add_channel(
+            name='momentum',
+            ipt=None,
+            val=self.momentum,
+            data_specs=(NullSpace(), ''),
+            dataset=monitoring_dataset)
+
+    def get_updates(self, learning_rate, grads, lr_scalers=None, global_error=None):
+        updates = OrderedDict()
+
+        for param, grad in grads.iteritems():
+            # Created required shared variables
+            lr = lr_scalers.get(param, learning_rate.get_value())
+            delta = sharedX(
+                np.zeros_like(param.get_value()) + lr,
+                borrow=True
+            )
+            previous_grad = sharedX(
+                np.zeros_like(param.get_value()),
+                borrow=True
+            )
+            self.delta[param] = delta
+            vel = sharedX(param.get_value() * 0.)
+            assert param.dtype == vel.dtype
+            assert grad.dtype == param.dtype
+            if param.name is not None:
+                vel.name = 'vel_' + param.name
 
             # Name variables according to the parameter name
             if param.name is not None:
@@ -442,10 +809,14 @@ class RPROP(LearningRule):
             )
 
             # Calculate updates of parameters
-            updated_inc = -delta*T.sgn(grad)
+
+            updates[vel] = self.momentum * vel + (1 - self.momentum) * delta_inc 
+            new_delta = updates[vel]
+            inc = -new_delta*T.sgn(grad)
 
             # Compile the updates
-            updates[param] = param + updated_inc
+            assert inc.dtype == vel.dtype
+            updates[param] = param + inc
             updates[delta] = delta_inc
             updates[previous_grad] = previous_grad_inc
 
@@ -459,6 +830,8 @@ class ARPROP(LearningRule):
         min_rate=1e-6,
         max_rate=50
     ):
+        assert increase_rate > 1.
+        assert decrease_rate < 1.
         self.decrease_rate = sharedX(decrease_rate, 'decrease_rate')
         self.increase_rate = sharedX(increase_rate, 'increase_rate')
         self.min_rate = min_rate

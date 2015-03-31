@@ -315,6 +315,9 @@ class SGD(TrainingAlgorithm):
         cost_value = self.cost.expr(model, nested_args,
                                     ** fixed_var_descr.fixed_vars)
 
+        (X, Y) = nested_args 
+        Y_hat = model.fprop(X)
+        global_error = model.cost(Y, Y_hat)
         if cost_value is not None and cost_value.name is None:
             # Concatenate the name of all tensors in theano_args !?
             cost_value.name = 'objective'
@@ -362,7 +365,7 @@ class SGD(TrainingAlgorithm):
 
         if self.learning_rule:
             updates.update(self.learning_rule.get_updates(
-                learning_rate, grads, lr_scalers))
+                learning_rate, grads, lr_scalers, global_error))
         else:
             # Use standard SGD updates with fixed learning rate.
             updates.update( dict(safe_zip(params, [param - learning_rate * \
