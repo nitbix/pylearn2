@@ -43,7 +43,7 @@
         },
 #        learning_rate: 0.097259,
         learning_rate: 0.001,
-        learning_rule: !obj:pylearn2.training_algorithms.learning_rule.RPROP {
+        learning_rule: !obj:pylearn2.training_algorithms.learning_rule.DROP_RPROP {
             max_rate: 50,
             min_rate: 0.0000000001,
             decrease_rate: 0.5,
@@ -74,6 +74,6 @@
 #            decay_factor: 0.022292
 #        }
     ],
-    save_path: "${PYLEARN2_TRAIN_FILE_FULL_STEM}-latest.pkl",
+    save_path: "${PYLEARN2_TRAIN_FILE_FULL_STEM}-test.pkl",
     save_freq : 1
 }

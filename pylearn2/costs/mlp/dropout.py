@@ -86,7 +86,7 @@ class Dropout(DefaultDataSpecsMixin, Cost):
         space, sources = self.get_data_specs(model)
         space.validate(data)
         (X, Y) = data
-        Y_hat = model.dropout_fprop(
+        Y_hat,mask_value = model.dropout_fprop(
             X,
             default_input_include_prob=self.default_input_include_prob,
             input_include_probs=self.input_include_probs,
@@ -94,7 +94,7 @@ class Dropout(DefaultDataSpecsMixin, Cost):
             input_scales=self.input_scales,
             per_example=self.per_example
         )
-        return model.cost(Y, Y_hat)
+        return model.cost(Y, Y_hat),mask_value
 
     @wraps(Cost.is_stochastic)
     def is_stochastic(self):

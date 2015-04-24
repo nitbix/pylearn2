@@ -914,7 +914,7 @@ class Monitor(object):
             for i, cost_name in enumerate(cost_names):
                 cost = costs[cost_name]
                 cost_ipt = nested_ipt[i]
-                cost_value = cost.expr(model, cost_ipt)
+                cost_value,mask = cost.expr(model, cost_ipt)
                 if cost_value is not None:
                     if cost_name == '':
                         name = dprefix + 'objective'

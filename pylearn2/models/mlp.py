@@ -812,6 +812,7 @@ class MLP(Layer):
 
         theano_rng = MRG_RandomStreams(max(self.rng.randint(2 ** 15), 1))
 
+        masks = {}
         for layer in self.layers:
             layer_name = layer.layer_name
 
@@ -825,7 +826,7 @@ class MLP(Layer):
             else:
                 scale = default_input_scale
 
-            state_below = self.apply_dropout(
+            state_below,layer_mask = self.apply_dropout(
                 state=state_below,
                 include_prob=include_prob,
                 theano_rng=theano_rng,
@@ -835,8 +836,9 @@ class MLP(Layer):
                 per_example=per_example
             )
             state_below = layer.fprop(state_below)
+            masks[layer_name] = layer_mask
 
-        return state_below
+        return state_below,masks
 
     def masked_fprop(self, state_below, mask, masked_input_layers=None,
                      default_input_scale=2., input_scales=None):
@@ -1028,7 +1030,7 @@ class MLP(Layer):
             rval = state * mask * scale
         else:
             rval = T.switch(mask, state * scale, mask_value)
-        return T.cast(rval, state.dtype)
+        return T.cast(rval, state.dtype),mask
 
     @wraps(Layer.cost)
     def cost(self, Y, Y_hat):
@@ -4586,11 +4588,12 @@ def sampled_dropout_average(mlp, inputs, num_masks,
     mlp._validate_layer_names(list(input_scales.keys()))
 
     if per_example:
-        outputs = [mlp.dropout_fprop(inputs, default_input_include_prob,
+        unzipped_outputs = [mlp.dropout_fprop(inputs, default_input_include_prob,
                                      input_include_probs,
                                      default_input_scale,
                                      input_scales)
                    for _ in xrange(num_masks)]
+        outputs,mask = zip(*unzipped_outputs)
 
     else:
         masks = [generate_dropout_mask(mlp, default_input_include_prob,

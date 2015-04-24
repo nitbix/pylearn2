@@ -106,7 +106,7 @@ class Cost(object):
         """
 
         try:
-            cost = self.expr(model=model, data=data, **kwargs)
+            cost,mask = self.expr(model=model, data=data, **kwargs)
         except TypeError:
             # If anybody knows how to add type(self) to the exception message
             # but still preserve the stack trace, please do so

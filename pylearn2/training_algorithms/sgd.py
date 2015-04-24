@@ -312,7 +312,7 @@ class SGD(TrainingAlgorithm):
         fixed_var_descr = self.cost.get_fixed_var_descr(model, nested_args)
         self.on_load_batch = fixed_var_descr.on_load_batch
 
-        cost_value = self.cost.expr(model, nested_args,
+        cost_value,mask = self.cost.expr(model, nested_args,
                                     ** fixed_var_descr.fixed_vars)
 
         (X, Y) = nested_args 
@@ -365,7 +365,7 @@ class SGD(TrainingAlgorithm):
 
         if self.learning_rule:
             updates.update(self.learning_rule.get_updates(
-                learning_rate, grads, lr_scalers, global_error))
+                learning_rate, grads, lr_scalers, global_error,mask))
         else:
             # Use standard SGD updates with fixed learning rate.
             updates.update( dict(safe_zip(params, [param - learning_rate * \
